@@ -5,7 +5,8 @@ use rs_sha384::{Sha384Hasher, HasherContext};
 
 #[derive(serde::Deserialize)]
 struct ArgsPost {
-    author: String,
+    uname: String,
+    pass: String,
     date: i64,
     title: String,
     message: String
@@ -26,18 +27,24 @@ struct Message {
 // this function handles creating an user account
 #[post("/newacc")]
 async fn new_acc(args: web::Json<ArgsNewAcc>) -> impl Responder {
+    let mut response = "success";
+    let mut create_acc = true; // Will be set to false if entry should not be done
     let conn = conn_users();
 
     let uname: &str = &args.uname;
     let pass: &str = &pass_hasher(&args.pass);
 
-    println!("pass: {}", pass);
-
-    // check whether uname is already used
+    // Check whether uname is already located in ./users.db
+    // If so dont create that account
     let sql = "SELECT * FROM users WHERE uname=:uname";
-
     let mut stmt= conn.prepare(sql).unwrap();
     stmt.bind((":uname", uname)).unwrap();
+    while let Ok(sqlite::State::Row) = stmt.next() {
+        let found_name = stmt.read::<String, _>("uname").unwrap();
+        println!("New acc: {}, found name: {}", uname, found_name);
+        response = "Username already taken";
+        create_acc = false;
+    };
 
     let sql = "
         INSERT INTO users (uname, pass) 
@@ -51,45 +58,53 @@ async fn new_acc(args: web::Json<ArgsNewAcc>) -> impl Responder {
     stmt.bind((":uname", uname)).unwrap();
     stmt.bind((":pass", pass)).unwrap();
 
-
-    while let Ok(sqlite::State::Row) = stmt.next(){};
+    if create_acc {
+        // If all is good then create the entry
+        while let Ok(sqlite::State::Row) = stmt.next(){};
+    }
 
     return HttpResponse::Ok().json(Message{
-        message: 1.to_string()
+        message: response.to_string()
     });
 }
 
 // this funciton handles JSON input and appends it to the SQLite database
 #[post("/addpost")]
 async fn add_post(args: web::Json<ArgsPost>) -> impl Responder {
+    let mut response = "success";
     let conn = conn_posts();
 
-    let author: &str = &args.author;
+    let uname: &str = &args.uname;
+    let pass: &str = &args.pass;
     let date: &str = &args.date.to_string();
     let title: &str = &args.title;
     let msg: &str = &args.message;
 
     let sql = "INSERT INTO posts (author, date, title, message) 
     VALUES (
-        :author,
+        :uname,
         :date,
         :title,
         :msg
     )";
 
-    let mut stmt = conn.prepare(sql).unwrap();
-    stmt.bind((":author", author)).unwrap();
-    stmt.bind((":date", date)).unwrap();
-    stmt.bind((":title", title)).unwrap();
-    stmt.bind((":msg", msg)).unwrap();
+    if check_login(uname, pass) {
+        let mut stmt = conn.prepare(sql).unwrap();
+        stmt.bind((":uname", uname)).unwrap();
+        stmt.bind((":date", date)).unwrap();
+        stmt.bind((":title", title)).unwrap();
+        stmt.bind((":msg", msg)).unwrap();
+        while let Ok(sqlite::State::Row) = stmt.next(){};
+        drop(&stmt);
+    } else {
+        response = "failed";
+    }
 
-    while let Ok(sqlite::State::Row) = stmt.next(){};
     
-    drop(&stmt);
     drop(&conn);
 
     return HttpResponse::Ok().json(Message{
-        message: 1.to_string()
+        message: response.to_string()
     });
 }
 
@@ -164,4 +179,21 @@ fn pass_hasher(str: &str) -> String {
     hasher.write(str.as_bytes());
     let result = HasherContext::finish(&mut hasher);
     return format!("{result:02x}");
+}
+
+fn check_login(uname: &str, pass: &str) -> bool {
+    let conn = conn_users();
+    let sql = "
+        SELECT pass FROM users WHERE uname=:uname
+    ";
+    let mut stmt = conn.prepare(sql).unwrap();
+    let pass_hashed = pass_hasher(pass);
+
+    while let Ok(sqlite::State::Row) = stmt.next(){
+        let pass = stmt.read::<String, _>("pass").unwrap();
+        if pass == pass_hashed {
+            return true;
+        }
+    };
+    return false;
 }
