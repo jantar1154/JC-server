@@ -1,4 +1,4 @@
-use std::hash::Hasher;
+use std::{hash::Hasher};
 
 use actix_web::{App, HttpResponse, HttpServer, Responder, post, web};
 use rs_sha384::{Sha384Hasher, HasherContext};
@@ -7,6 +7,7 @@ use rs_sha384::{Sha384Hasher, HasherContext};
 struct ArgsPost {
     uname: String,
     pass: String,
+    token: String,
     date: i64,
     title: String,
     message: String
@@ -18,11 +19,16 @@ struct ArgsNewAcc {
     pass: String
 }
 
+#[derive(serde::Deserialize)]
+struct ArgsGetToken {
+    uname: String,
+    pass: String
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Message {
     message: String,
 }
-
 
 // this function handles creating an user account
 #[post("/newacc")]
@@ -46,21 +52,43 @@ async fn new_acc(args: web::Json<ArgsNewAcc>) -> impl Responder {
         create_acc = false;
     };
 
+    let token: &str = &generate_token(uname, pass);
+
     let sql = "
-        INSERT INTO users (uname, pass) 
+        INSERT INTO users (uname, pass, token) 
         VALUES (
             :uname, 
-            :pass
+            :pass,
+            :token
         );
     ";
 
     let mut stmt = conn.prepare(sql).unwrap();
     stmt.bind((":uname", uname)).unwrap();
     stmt.bind((":pass", pass)).unwrap();
+    stmt.bind((":token", token)).unwrap();
 
     if create_acc {
         // If all is good then create the entry
         while let Ok(sqlite::State::Row) = stmt.next(){};
+    }
+
+    return HttpResponse::Ok().json(Message{
+        message: response.to_string()
+    });
+}
+
+#[post("/gettkn")]
+async fn get_token(args: web::Json<ArgsGetToken>) -> impl Responder {
+    let uname = &args.uname;
+    let pass = &args.pass;
+    let token = generate_token(uname, pass);
+
+    let mut response = "";
+
+    match check_login(uname, pass, &token) {
+        true => {response = &token;},
+        false => {response = "invalid credentials";}
     }
 
     return HttpResponse::Ok().json(Message{
@@ -79,6 +107,7 @@ async fn add_post(args: web::Json<ArgsPost>) -> impl Responder {
     let date: &str = &args.date.to_string();
     let title: &str = &args.title;
     let msg: &str = &args.message;
+    let token: &str = &args.token;
 
     let sql = "INSERT INTO posts (author, date, title, message) 
     VALUES (
@@ -88,20 +117,19 @@ async fn add_post(args: web::Json<ArgsPost>) -> impl Responder {
         :msg
     )";
 
-    if check_login(uname, pass) {
-        let mut stmt = conn.prepare(sql).unwrap();
-        stmt.bind((":uname", uname)).unwrap();
-        stmt.bind((":date", date)).unwrap();
-        stmt.bind((":title", title)).unwrap();
-        stmt.bind((":msg", msg)).unwrap();
-        while let Ok(sqlite::State::Row) = stmt.next(){};
-        drop(&stmt);
-    } else {
-        response = "failed";
+    match check_login(uname, pass, token) {
+        true => {
+            let mut stmt = conn.prepare(sql).unwrap();
+            stmt.bind((":uname", uname)).unwrap();
+            stmt.bind((":date", date)).unwrap();
+            stmt.bind((":title", title)).unwrap();
+            stmt.bind((":msg", msg)).unwrap();
+            while let Ok(sqlite::State::Row) = stmt.next(){};
+            drop(&stmt);
+        }
+        false => response = "invalid credentials"
     }
-
     
-    drop(&conn);
 
     return HttpResponse::Ok().json(Message{
         message: response.to_string()
@@ -131,12 +159,10 @@ async fn main() -> std::io::Result<()> {
         println!("({}). Name {}, date ({}), msg: {}", id, athr, date, msg);
     }
 
-    drop(&conn_posts);
-    drop(&conn_users);
-
     return HttpServer::new(|| App::new()
     .service(add_post)
-    .service(new_acc))
+    .service(new_acc)
+    .service(get_token))
         .bind("0.0.0.0:6950")?
         .run()
         .await;
@@ -167,7 +193,8 @@ fn init_users(conn: &sqlite::Connection) {
         CREATE TABLE IF NOT EXISTS users (
             ID_usr INTEGER NOT NULL PRIMARY KEY, 
             uname VARCHAR, 
-            pass VARCHAR
+            pass VARCHAR,
+            token VARCHAR
         );
     ";
 
@@ -181,19 +208,25 @@ fn pass_hasher(str: &str) -> String {
     return format!("{result:02x}");
 }
 
-fn check_login(uname: &str, pass: &str) -> bool {
+fn check_login(uname: &str, pass: &str, token: &str) -> bool {
     let conn = conn_users();
     let sql = "
-        SELECT pass FROM users WHERE uname=:uname
+        SELECT * FROM users WHERE uname=:uname
     ";
     let mut stmt = conn.prepare(sql).unwrap();
+    stmt.bind((":uname", uname)).unwrap();
     let pass_hashed = pass_hasher(pass);
 
     while let Ok(sqlite::State::Row) = stmt.next(){
-        let pass = stmt.read::<String, _>("pass").unwrap();
-        if pass == pass_hashed {
+        let pass_db = stmt.read::<String, _>("pass").unwrap();
+        if pass_db == pass_hashed && token == generate_token(&uname, &pass){
             return true;
         }
     };
     return false;
+}
+
+fn generate_token(uname: &str, pass: &str) -> String {
+    let res = pass_hasher(&format!("696969{}1as23dfgh1456{}aujisdhfgbasdbnhujisbg{}f45d6ah4156{}", uname, pass, uname, uname));
+    return res;
 }
