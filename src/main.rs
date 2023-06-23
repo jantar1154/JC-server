@@ -1,7 +1,8 @@
 use std::{hash::Hasher};
 
-use actix_web::{App, HttpResponse, HttpServer, Responder, post, web, dev::Response};
+use actix_web::{App, HttpResponse, HttpServer, Responder, post, web};
 use rs_sha384::{Sha384Hasher, HasherContext};
+use serde::de::value::StringDeserializer;
 
 #[derive(serde::Deserialize)]
 struct ArgsPost {
@@ -25,9 +26,39 @@ struct ArgsGetToken {
     pass: String
 }
 
+#[derive(serde::Deserialize)]
+struct ArgsRcvPosts {
+    token: String
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Message {
     message: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct PostRtn {
+    author: String,
+    date: i64,
+    title: String,
+    msg: String
+}
+
+// this function returns all the post from the db if user is properly
+// logged in.
+#[post("/rcvposts")]
+async fn receive_posts(args: web::Json<ArgsRcvPosts>) -> impl Responder {
+    let token: &str = &args.token;
+
+    //check whether token is valid
+    let mut response = "token invalid";
+    if is_token_in_db(token) { response = "ok"; }
+
+    // Create an array of PostRtn types and serialize the array to response
+
+    return HttpResponse::Ok().json(Message{
+        message: response.to_string()
+    });
 }
 
 // this function handles creating an user account
@@ -160,7 +191,8 @@ async fn main() -> std::io::Result<()> {
     return HttpServer::new(|| App::new()
     .service(add_post)
     .service(new_acc)
-    .service(get_token))
+    .service(get_token)
+    .service(receive_posts))
         .bind("0.0.0.0:6950")?
         .run()
         .await;
@@ -199,6 +231,7 @@ fn init_users(conn: &sqlite::Connection) {
     conn.execute(sql).unwrap();
 }
 
+// takes in string and runs it through a hashing fn
 fn pass_hasher(str: &str) -> String {
     let mut hasher: Sha384Hasher = Sha384Hasher::default();
     hasher.write(str.as_bytes());
@@ -206,6 +239,7 @@ fn pass_hasher(str: &str) -> String {
     return format!("{result:02x}");
 }
 
+// checks whether login credentials are okay
 fn check_login(uname: &str, pass: &str, token: &str) -> bool {
     let conn = conn_users();
     let sql = "
@@ -224,11 +258,13 @@ fn check_login(uname: &str, pass: &str, token: &str) -> bool {
     return false;
 }
 
+// Super secret
 fn generate_token(uname: &str, pass: &str) -> String {
     let res = pass_hasher(&format!("696969{}1as23dfgh1456{}aujisdhfgbasdbnhujisbg{}f45d6ah4156{}", uname, pass, uname, uname));
     return res;
 }
 
+// Checks if token is in db (doesnt care who it belongs to)
 fn is_token_in_db(token: &str) -> bool {
     let conn = conn_users();
 
