@@ -143,8 +143,7 @@ async fn main() -> std::io::Result<()> {
 
     init_post(&conn_posts);
     init_users(&conn_users);
-
-    // DEBUG: prints out all the database contents
+    
     let sql: &str = "SELECT * FROM posts";
     let mut stmt = conn_posts.prepare(sql).unwrap();
 
@@ -229,4 +228,19 @@ fn check_login(uname: &str, pass: &str, token: &str) -> bool {
 fn generate_token(uname: &str, pass: &str) -> String {
     let res = pass_hasher(&format!("696969{}1as23dfgh1456{}aujisdhfgbasdbnhujisbg{}f45d6ah4156{}", uname, pass, uname, uname));
     return res;
+}
+
+fn is_token_in_db(token: &str) -> bool {
+    let conn = conn_users();
+
+    let sql = "
+        SELECT * FROM users WHERE token=:token
+    ";
+    let mut stmt = conn.prepare(sql).unwrap();
+    stmt.bind((":token", token)).unwrap();
+
+    while let Ok(sqlite::State::Row) = stmt.next() {
+        return true;
+    }
+    return false;
 }
