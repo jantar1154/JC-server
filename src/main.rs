@@ -1,6 +1,6 @@
 use std::{hash::Hasher};
 
-use actix_web::{App, HttpResponse, HttpServer, Responder, post, web};
+use actix_web::{App, HttpResponse, HttpServer, Responder, post, web, dev::Response};
 use rs_sha384::{Sha384Hasher, HasherContext};
 
 #[derive(serde::Deserialize)]
@@ -84,11 +84,10 @@ async fn get_token(args: web::Json<ArgsGetToken>) -> impl Responder {
     let pass = &args.pass;
     let token = generate_token(uname, pass);
 
-    let mut response = "";
+    let mut response = "invalid credentials";
 
-    match check_login(uname, pass, &token) {
-        true => {response = &token;},
-        false => {response = "invalid credentials";}
+    if check_login(uname, pass, &token) {
+        response = &token;
     }
 
     return HttpResponse::Ok().json(Message{
