@@ -2,6 +2,7 @@ use std::{hash::Hasher};
 
 use actix_web::{App, HttpResponse, HttpServer, Responder, post, web, dev::Response};
 use rs_sha384::{Sha384Hasher, HasherContext};
+use rsa::RsaPublicKey;
 
 #[derive(serde::Deserialize)]
 struct ArgsPost {
@@ -78,6 +79,7 @@ async fn new_acc(args: web::Json<ArgsNewAcc>) -> impl Responder {
     });
 }
 
+// Takes in uname and pass and generates token
 #[post("/gettkn")]
 async fn get_token(args: web::Json<ArgsGetToken>) -> impl Responder {
     let uname = &args.uname;
@@ -242,4 +244,12 @@ fn is_token_in_db(token: &str) -> bool {
         return true;
     }
     return false;
+}
+
+fn encrypt(str: &str, pub_key: RsaPublicKey) -> String {
+    let mut rng = rand::thread_rng();
+    let data = str.as_bytes();
+    let encrypted = pub_key.encrypt(&mut rng, rsa::Pkcs1v15Encrypt, data).unwrap();
+    let enc_string = String::from_utf8_lossy(&encrypted).into_owned();
+    return enc_string;
 }
